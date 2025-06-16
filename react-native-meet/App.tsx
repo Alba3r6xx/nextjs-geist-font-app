@@ -1,43 +1,128 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { StyleSheet, View, Button, Text } from 'react-native';
-import { mediaDevices, RTCView, RTCPeerConnection, RTCSessionDescription, RTCIceCandidate, MediaStream, MediaStreamTrack } from 'react-native-webrtc';
+import { StyleSheet, View, Text, SafeAreaView } from 'react-native';
+import { 
+  mediaDevices, 
+  RTCView, 
+  RTCPeerConnection, 
+  RTCSessionDescription, 
+  RTCIceCandidate,
+  MediaStream,
+  MediaStreamTrack 
+} from 'react-native-webrtc';
+import Controls from './components/Controls';
+import ParticipantList from './components/ParticipantList';
+import Chat from './components/Chat';
+
+// Type declarations for react-native-webrtc
+// Type declarations for react-native-webrtc
+// Type declarations for react-native-webrtc
+// Type declarations for react-native-webrtc
+declare module 'react-native-webrtc' {
+  interface MediaStreamInit {
+    audio?: boolean;
+    video?: boolean;
+  }
+
+  interface MediaStream {
+    release(): void;
+    toURL(): string;
+    getTracks(): MediaStreamTrack[];
+  }
+
+  interface RTCPeerConnection {
+    ontrack: ((ev: { streams: MediaStream[] }) => void) | null;
+    onicecandidate: ((ev: { candidate: RTCIceCandidate | null }) => void) | null;
+    oniceconnectionstatechange: (() => void) | null;
+    addTrack(track: MediaStreamTrack, stream: MediaStream): RTCRtpSender;
+    createOffer(options?: RTCOfferOptions): Promise<RTCSessionDescriptionInit>;
+    setLocalDescription(description: RTCSessionDescription): Promise<void>;
+    setRemoteDescription(description: RTCSessionDescription): Promise<void>;
+    close(): void;
+  }
+
+  interface RTCSessionDescription {
+    sdp: string;
+    type: RTCSdpType;
+  }
+}
+
+interface Participant {
+  id: string;
+  stream: MediaStream | null;
+  name: string;
+}
+
+interface Message {
+  id: string;
+  sender: string;
+  text: string;
+  timestamp: number;
+}
+
+interface Participant {
+  id: string;
+  stream: MediaStream | null;
+  name: string;
+}
 
 export default function App() {
-  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
-  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const [localStream, setLocalStream] = useState<MediaStreamType | null>(null);
+  const [remoteStreams, setRemoteStreams] = useState<{ [key: string]: MediaStreamType }>({});
+  const [participants, setParticipants] = useState<Participant[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [isMuted, setIsMuted] = useState(false);
+  const [isVideoEnabled, setIsVideoEnabled] = useState(true);
   const [connected, setConnected] = useState(false);
-  const pc = useRef<RTCPeerConnection | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  
+  const pc = useRef<RTCPeerConnectionType | null>(null);
   const ws = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     const startLocalStream = async () => {
-      const stream = await mediaDevices.getUserMedia({
-        audio: true,
-        video: true,
-      });
-      setLocalStream(stream);
+      try {
+        const stream = await mediaDevices.getUserMedia({
+          audio: true,
+          video: true,
+        }) as MediaStreamType;
+        setLocalStream(stream);
 
-      const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
-      pc.current = new RTCPeerConnection(configuration);
+        const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+        const peerConnection = new RTCPeerConnection(configuration) as RTCPeerConnectionType;
+        pc.current = peerConnection;
 
-      stream.getTracks().forEach((track: MediaStreamTrack) => {
-        if (pc.current) {
-          pc.current.addTrack(track, stream);
-        }
-      });
+        stream.getTracks().forEach((track: MediaStreamTrack) => {
+          peerConnection.addTrack(track, stream);
+        });
 
-      if (pc.current) {
-        (pc.current as any).ontrack = (event: any) => {
-          if (event.streams && event.streams[0]) {
-            setRemoteStream(event.streams[0]);
+        peerConnection.ontrack = (ev) => {
+          if (ev.streams?.[0]) {
+            const streamId = ev.streams[0].id;
+            setRemoteStreams(prev => ({
+              ...prev,
+              [streamId]: ev.streams[0] as MediaStreamType
+            }));
           }
         };
 
-        pc.current.onicecandidate = (event) => {
-          if (event.candidate && ws.current && ws.current.readyState === WebSocket.OPEN) {
-            ws.current.send(JSON.stringify({ type: 'ice-candidate', candidate: event.candidate }));
+        peerConnection.onicecandidate = (ev) => {
+          if (ev.candidate && ws.current?.readyState === WebSocket.OPEN) {
+            ws.current.send(JSON.stringify({ 
+              type: 'ice-candidate', 
+              candidate: ev.candidate 
+            }));
           }
         };
+
+        peerConnection.oniceconnectionstatechange = () => {
+          const state = peerConnection.iceConnectionState;
+          if (state === 'disconnected' || state === 'failed') {
+            setError('Connection lost. Please try reconnecting.');
+          }
+        };
+      } catch (err) {
+        console.error('Error starting stream:', err);
+        setError('Error accessing camera/microphone');
       }
 
       // Connect to signaling server
@@ -50,30 +135,47 @@ export default function App() {
       };
 
       ws.current.onmessage = async (message) => {
-        const data = JSON.parse(message.data);
-        if (!pc.current) return;
+        try {
+          const data = JSON.parse(message.data);
+          if (!pc.current) return;
 
-        switch (data.type) {
-          case 'offer':
-            await pc.current.setRemoteDescription(new RTCSessionDescription(data.offer));
-            const answer = await pc.current.createAnswer();
-            await pc.current.setLocalDescription(answer);
-            ws.current?.send(JSON.stringify({ type: 'answer', answer }));
-            break;
-          case 'answer':
-            await pc.current.setRemoteDescription(new RTCSessionDescription(data.answer));
-            break;
-          case 'ice-candidate':
-            if (data.candidate) {
-              try {
+          switch (data.type) {
+            case 'offer':
+              await pc.current.setRemoteDescription(new RTCSessionDescription(data.offer));
+              const answer = await pc.current.createAnswer();
+              await pc.current.setLocalDescription(answer);
+              ws.current?.send(JSON.stringify({ type: 'answer', answer }));
+              break;
+
+            case 'answer':
+              await pc.current.setRemoteDescription(new RTCSessionDescription(data.answer));
+              break;
+
+            case 'ice-candidate':
+              if (data.candidate) {
                 await pc.current.addIceCandidate(new RTCIceCandidate(data.candidate));
-              } catch (e) {
-                console.error('Error adding received ice candidate', e);
               }
-            }
-            break;
-          default:
-            break;
+              break;
+
+            case 'chat':
+              setMessages(prev => [...prev, {
+                id: Date.now().toString(),
+                sender: data.sender,
+                text: data.text,
+                timestamp: Date.now()
+              }]);
+              break;
+
+            case 'participant-list':
+              setParticipants(data.participants);
+              break;
+
+            default:
+              break;
+          }
+        } catch (err) {
+          console.error('Error processing message:', err);
+          setError('Error processing message');
         }
       };
 
@@ -112,45 +214,99 @@ export default function App() {
     };
   }, []);
 
+  const toggleAudio = () => {
+    if (localStream) {
+      localStream.getAudioTracks().forEach(track => {
+        track.enabled = !track.enabled;
+      });
+      setIsMuted(!isMuted);
+    }
+  };
+
+  const toggleVideo = () => {
+    if (localStream) {
+      localStream.getVideoTracks().forEach(track => {
+        track.enabled = !track.enabled;
+      });
+      setIsVideoEnabled(!isVideoEnabled);
+    }
+  };
+
+  const sendMessage = (text: string) => {
+    if (ws.current?.readyState === WebSocket.OPEN) {
+      const message = {
+        type: 'chat',
+        text,
+        sender: 'Me',
+      };
+      ws.current.send(JSON.stringify(message));
+      setMessages(prev => [...prev, {
+        id: Date.now().toString(),
+        sender: 'Me',
+        text,
+        timestamp: Date.now(),
+      }]);
+    }
+  };
+
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>React Native Meet</Text>
-      <Text style={{ color: '#fff', marginBottom: 10 }}>
-        {connected ? 'Connected' : 'Connecting...'}
-      </Text>
-      {localStream && (
-        <RTCView
-          streamURL={localStream.toURL()}
-          style={styles.localVideo}
-          objectFit="cover"
-        />
+    <SafeAreaView style={styles.container}>
+      {error && (
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>{error}</Text>
+        </View>
       )}
-      {remoteStream ? (
-        <RTCView
-          streamURL={remoteStream.toURL()}
-          style={styles.remoteVideo}
-          objectFit="cover"
+
+      <View style={styles.mainContent}>
+        <View style={styles.videoGrid}>
+          {localStream && (
+            <View style={styles.localVideoContainer}>
+              <RTCView
+                streamURL={localStream.toURL()}
+                style={styles.localVideo}
+                objectFit="cover"
+              />
+              <Text style={styles.localLabel}>You</Text>
+            </View>
+          )}
+          <ParticipantList
+            participants={participants.map(p => ({
+              ...p,
+              stream: remoteStreams[p.id] || null,
+            }))}
+          />
+        </View>
+
+        <Chat
+          messages={messages}
+          onSendMessage={sendMessage}
         />
-      ) : (
-        <Text style={{ color: '#fff' }}>No remote stream</Text>
-      )}
-      <Button title="Leave Call" onPress={() => {
-        if (pc.current) {
-          pc.current.close();
-          pc.current = null;
-        }
-        if (ws.current) {
-          ws.current.close();
-          ws.current = null;
-        }
-        if (localStream) {
-          localStream.release();
-          setLocalStream(null);
-        }
-        setRemoteStream(null);
-        setConnected(false);
-      }} />
-    </View>
+      </View>
+
+      <Controls
+        isMuted={isMuted}
+        isVideoEnabled={isVideoEnabled}
+        onToggleAudio={toggleAudio}
+        onToggleVideo={toggleVideo}
+        onLeaveCall={() => {
+          if (pc.current) {
+            pc.current.close();
+            pc.current = null;
+          }
+          if (ws.current) {
+            ws.current.close();
+            ws.current = null;
+          }
+          if (localStream) {
+            localStream.getTracks().forEach(track => track.stop());
+            setLocalStream(null);
+          }
+          setRemoteStreams({});
+          setConnected(false);
+          setError(null);
+        }}
+      />
+    </SafeAreaView>
   );
 }
 
@@ -158,23 +314,54 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#000',
+  },
+  errorContainer: {
+    backgroundColor: '#dc3545',
+    padding: 10,
     alignItems: 'center',
-    justifyContent: 'center',
   },
-  title: {
+  errorText: {
     color: '#fff',
-    fontSize: 24,
-    marginBottom: 20,
+    fontSize: 14,
   },
-  localVideo: {
-    width: 150,
-    height: 200,
+  mainContent: {
+    flex: 1,
+    flexDirection: 'row',
+  },
+  videoGrid: {
+    flex: 2,
+    padding: 10,
+  },
+  localVideoContainer: {
+    width: '100%',
+    aspectRatio: 16 / 9,
+    marginBottom: 10,
+    borderRadius: 8,
+    overflow: 'hidden',
     backgroundColor: '#222',
   },
-  remoteVideo: {
-    width: 300,
-    height: 400,
-    backgroundColor: '#444',
-    marginTop: 20,
+  localVideo: {
+    flex: 1,
+  },
+  localLabel: {
+    position: 'absolute',
+    bottom: 8,
+    left: 8,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    color: '#fff',
+    padding: 4,
+    borderRadius: 4,
+    fontSize: 12,
   },
 });
+
+// Type assertion for MediaStream
+declare global {
+  interface MediaStream {
+    release(): void;
+    toURL(): string;
+  }
+  interface MediaStreamTrack {
+    enabled: boolean;
+  }
+}
