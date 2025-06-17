@@ -1,7 +1,9 @@
+import { MediaStream } from 'react-native-webrtc';
+
 export interface Participant {
   id: string;
   name: string;
-  isConnected?: boolean;
+  stream?: MediaStream | null;
 }
 
 export interface Message {
@@ -9,5 +11,4 @@ export interface Message {
   sender: string;
   text: string;
   timestamp: number;
-  type: string;
 }
