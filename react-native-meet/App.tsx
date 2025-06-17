@@ -13,61 +13,11 @@ import Controls from './components/Controls';
 import ParticipantList from './components/ParticipantList';
 import Chat from './components/Chat';
 
-// Type declarations for react-native-webrtc
-// Type declarations for react-native-webrtc
-// Type declarations for react-native-webrtc
-// Type declarations for react-native-webrtc
-declare module 'react-native-webrtc' {
-  interface MediaStreamInit {
-    audio?: boolean;
-    video?: boolean;
-  }
-
-  interface MediaStream {
-    release(): void;
-    toURL(): string;
-    getTracks(): MediaStreamTrack[];
-  }
-
-  interface RTCPeerConnection {
-    ontrack: ((ev: { streams: MediaStream[] }) => void) | null;
-    onicecandidate: ((ev: { candidate: RTCIceCandidate | null }) => void) | null;
-    oniceconnectionstatechange: (() => void) | null;
-    addTrack(track: MediaStreamTrack, stream: MediaStream): RTCRtpSender;
-    createOffer(options?: RTCOfferOptions): Promise<RTCSessionDescriptionInit>;
-    setLocalDescription(description: RTCSessionDescription): Promise<void>;
-    setRemoteDescription(description: RTCSessionDescription): Promise<void>;
-    close(): void;
-  }
-
-  interface RTCSessionDescription {
-    sdp: string;
-    type: RTCSdpType;
-  }
-}
-
-interface Participant {
-  id: string;
-  stream: MediaStream | null;
-  name: string;
-}
-
-interface Message {
-  id: string;
-  sender: string;
-  text: string;
-  timestamp: number;
-}
-
-interface Participant {
-  id: string;
-  stream: MediaStream | null;
-  name: string;
-}
+import { Participant, Message } from './types';
 
 export default function App() {
-  const [localStream, setLocalStream] = useState<MediaStreamType | null>(null);
-  const [remoteStreams, setRemoteStreams] = useState<{ [key: string]: MediaStreamType }>({});
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [remoteStreams, setRemoteStreams] = useState<{ [key: string]: MediaStream }>({});
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [isMuted, setIsMuted] = useState(false);
@@ -75,7 +25,7 @@ export default function App() {
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
-  const pc = useRef<RTCPeerConnectionType | null>(null);
+  const pc = useRef<RTCPeerConnection | null>(null);
   const ws = useRef<WebSocket | null>(null);
 
   useEffect(() => {
@@ -84,28 +34,28 @@ export default function App() {
         const stream = await mediaDevices.getUserMedia({
           audio: true,
           video: true,
-        }) as MediaStreamType;
+        }) as MediaStream;
         setLocalStream(stream);
 
         const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
-        const peerConnection = new RTCPeerConnection(configuration) as RTCPeerConnectionType;
+        const peerConnection = new RTCPeerConnection(configuration);
         pc.current = peerConnection;
 
         stream.getTracks().forEach((track: MediaStreamTrack) => {
           peerConnection.addTrack(track, stream);
         });
 
-        peerConnection.ontrack = (ev) => {
+        (peerConnection as any).ontrack = (ev: { streams: MediaStream[] }) => {
           if (ev.streams?.[0]) {
             const streamId = ev.streams[0].id;
             setRemoteStreams(prev => ({
               ...prev,
-              [streamId]: ev.streams[0] as MediaStreamType
+              [streamId]: ev.streams[0]
             }));
           }
         };
 
-        peerConnection.onicecandidate = (ev) => {
+        (peerConnection as any).onicecandidate = (ev: { candidate: RTCIceCandidate | null }) => {
           if (ev.candidate && ws.current?.readyState === WebSocket.OPEN) {
             ws.current.send(JSON.stringify({ 
               type: 'ice-candidate', 
@@ -114,7 +64,7 @@ export default function App() {
           }
         };
 
-        peerConnection.oniceconnectionstatechange = () => {
+        (peerConnection as any).oniceconnectionstatechange = () => {
           const state = peerConnection.iceConnectionState;
           if (state === 'disconnected' || state === 'failed') {
             setError('Connection lost. Please try reconnecting.');
@@ -131,7 +81,7 @@ export default function App() {
       ws.current.onopen = () => {
         console.log('Connected to signaling server');
         setConnected(true);
-        createOffer();
+        createOffer().catch(console.error);
       };
 
       ws.current.onmessage = async (message) => {
@@ -190,7 +140,7 @@ export default function App() {
 
       const createOffer = async () => {
         if (!pc.current) return;
-        const offer = await pc.current.createOffer();
+        const offer = await pc.current.createOffer({});
         await pc.current.setLocalDescription(offer);
         ws.current?.send(JSON.stringify({ type: 'offer', offer }));
       };
@@ -317,41 +267,65 @@ const styles = StyleSheet.create({
   },
   errorContainer: {
     backgroundColor: '#dc3545',
-    padding: 10,
+    padding: 12,
     alignItems: 'center',
+    transform: [{ translateY: 0 }],
+    opacity: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
   },
   errorText: {
     color: '#fff',
     fontSize: 14,
+    fontWeight: '500',
   },
   mainContent: {
     flex: 1,
     flexDirection: 'row',
+    backgroundColor: '#111',
   },
   videoGrid: {
     flex: 2,
-    padding: 10,
+    padding: 16,
+    gap: 16,
   },
   localVideoContainer: {
     width: '100%',
     aspectRatio: 16 / 9,
-    marginBottom: 10,
-    borderRadius: 8,
+    marginBottom: 16,
+    borderRadius: 12,
     overflow: 'hidden',
     backgroundColor: '#222',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
+    transform: [{ scale: 1 }],
   },
   localVideo: {
     flex: 1,
+    backgroundColor: '#1a1a1a',
   },
   localLabel: {
     position: 'absolute',
-    bottom: 8,
-    left: 8,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    bottom: 12,
+    left: 12,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
     color: '#fff',
-    padding: 4,
-    borderRadius: 4,
-    fontSize: 12,
+    padding: 6,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    fontSize: 14,
+    fontWeight: '600',
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
   },
 });
 
