@@ -8,6 +8,7 @@ interface ControlsProps {
   onToggleAudio: () => void;
   onToggleVideo: () => void;
   onLeaveCall: () => void;
+  onToggleChat?: () => void;
 }
 
 export default function Controls({
@@ -16,6 +17,7 @@ export default function Controls({
   onToggleAudio,
   onToggleVideo,
   onLeaveCall,
+  onToggleChat,
 }: ControlsProps) {
   return (
     <View style={styles.container}>
@@ -46,6 +48,13 @@ export default function Controls({
         <Ionicons name="call" size={24} color="#fff" />
         <Text style={styles.buttonText}>Leave</Text>
       </TouchableOpacity>
+
+      {onToggleChat && (
+        <TouchableOpacity style={styles.button} onPress={onToggleChat}>
+          <Ionicons name="chatbubble-ellipses" size={24} color="#fff" />
+          <Text style={styles.buttonText}>Chat</Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }
